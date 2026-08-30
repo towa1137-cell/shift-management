@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>シフト管理</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans JP",sans-serif;background:#f5f6f8;color:#222}header{background:#fff;padding:18px 16px 12px;position:sticky;top:0;z-index:3;border-bottom:1px solid #e8e8e8}h1{font-size:22px;margin:0 0 12px}.tabs{display:flex;gap:8px}.tab{border:0;background:#eee;padding:9px 14px;border-radius:20px;font-weight:700}.tab.active{background:#222;color:#fff}main{padding:14px}.card{background:#fff;border-radius:16px;padding:14px;margin-bottom:14px;box-shadow:0 2px 10px #0001}.month{display:flex;justify-content:space-between;align-items:center}.month button{border:0;background:#eee;border-radius:10px;padding:8px 14px;font-size:20px}.grid{overflow:auto}.table{min-width:760px;border-collapse:collapse;width:100%}th,td{border:1px solid #e5e5e5;padding:8px;text-align:center;white-space:nowrap}th{background:#fafafa}.name{position:sticky;left:0;background:#fff;text-align:left;font-weight:700}.shift{display:inline-block;border-radius:8px;padding:5px 7px;font-size:12px;background:#eaf4ff}.off{color:#aaa}.badge{font-size:11px;border-radius:12px;padding:4px 8px;background:#eee}.ok{background:#e8f7ed;color:#17833b}.warn{background:#fff0f0;color:#c33}.hidden{display:none!important}.list{display:flex;flex-direction:column;gap:8px}.person{display:flex;justify-content:space-between;align-items:center;padding:10px;border:1px solid #eee;border-radius:10px}button{cursor:pointer}.primary{background:#222;color:#fff;border:0;border-radius:10px;padding:11px 14px;font-weight:700}.danger{color:#d33;border:0;background:none}input,select{padding:11px;border:1px solid #ddd;border-radius:9px;width:100%;margin:5px 0 10px}.modal{position:fixed;inset:0;background:#0007;display:flex;align-items:flex-end;z-index:10}.sheet{background:#fff;width:100%;border-radius:20px 20px 0 0;padding:20px;max-height:82vh;overflow:auto}.timeRow{display:flex;gap:8px;align-items:center}.timeRow select{flex:1}.quick{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 14px}.quick button{border:0;background:#eee;border-radius:18px;padding:9px 13px}.actions{display:flex;gap:8px}.actions button{flex:1}
+</style>
+</head>
+<body>
+<header><h1>シフト管理</h1><div class="tabs"><button class="tab active" onclick="showTab('schedule',this)">月間シフト</button><button class="tab" onclick="showTab('requests',this)">希望シフト</button><button class="tab" onclick="showTab('staff',this)">スタッフ</button></div></header>
+<main>
+<section id="schedule"><div class="card month"><button onclick="moveMonth(-1)">‹</button><strong id="title"></strong><button onclick="moveMonth(1)">›</button></div><div class="card" id="shortage"></div><div class="card grid"><table class="table"><thead id="head"></thead><tbody id="body"></tbody></table></div></section>
+<section id="requests" class="hidden"><div class="card"><h2>希望シフト</h2><p>スタッフごとに希望日を登録できます。</p><div id="req"></div></div></section>
+<section id="staff" class="hidden"><div class="card"><h2>スタッフ一覧</h2><div id="staffList" class="list"></div><hr><input id="newStaff" placeholder="スタッフ名"><button class="primary" onclick="addStaff()">スタッフを追加</button></div></section>
+</main>
+<div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()"><div class="sheet"><h2 id="modalTitle"></h2><label>勤務時間</label><div class="timeRow"><select id="start"></select><span>〜</span><select id="end"></select></div><div class="quick"><button onclick="quickSet('休み')">休み</button><button onclick="quickSet('18:00〜')">18時〜</button><button onclick="quickSet('20:00〜')">20時〜</button><button onclick="quickSet('LAST')">LAST</button></div><div class="actions"><button class="primary" onclick="saveShift()">保存</button><button onclick="toggleClosed()">休業日にする</button><button onclick="closeModal()">キャンセル</button></div></div></div>
+<script>
+const KEY='shift_management_v2';
+let state=JSON.parse(localStorage.getItem(KEY)||'null')||{staff:['葵','太郎','花子','健','美咲'],shifts:{},req:{},closed:{}}; state.closed=state.closed||{};
+let viewDate=new Date();viewDate.setDate(1);let editing=null;
+const $=id=>document.getElementById(id);
+function persist(){localStorage.setItem(KEY,JSON.stringify(state))}
+function daysInMonth(){return new Date(viewDate.getFullYear(),viewDate.getMonth()+1,0).getDate()}
+function dateKey(d){return viewDate.getFullYear()+'-'+String(viewDate.getMonth()+1).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
+function timeOptions(){let a=['<option value="">選択</option>'];for(let h=0;h<=29;h++)for(let m=0;m<60;m+=15){let total=h*60+m,hh=String(Math.floor(total/60)%24).padStart(2,'0'),mm=String(total%60).padStart(2,'0');a.push(`<option value="${hh}:${mm}">${hh}:${mm}</option>`)}return a.join('')}
+function initTimes(){$('start').innerHTML=timeOptions();$('end').innerHTML=timeOptions()+'<option value="LAST">LAST</option>'}
+function render(){
+ $('title').textContent=viewDate.getFullYear()+'年'+(viewDate.getMonth()+1)+'月';
+ let h='<tr><th>スタッフ</th>';for(let d=1;d<=daysInMonth();d++)h+=`<th>${d}</th>`;$('head').innerHTML=h+'</tr>';
+ let b='';state.staff.forEach((s,si)=>{b+=`<tr><td class="name">${escapeHtml(s)}</td>`;for(let d=1;d<=daysInMonth();d++){let dk=dateKey(d),k=s+'|'+dk,v=state.shifts[k]||'';b+=`<td onclick="openEdit(${si},${d})">${state.closed[dk]?'<span class="shift">休業</span>':(v?`<span class="shift">${escapeHtml(v)}</span>`:'<span class="off">—</span>')}</td>`}b+='</tr>'});$('body').innerHTML=b;
+ let bad=[];for(let d=1;d<=daysInMonth();d++){let dk=dateKey(d);if(state.closed[dk])continue;let date=new Date(viewDate.getFullYear(),viewDate.getMonth(),d);let day=date.getDay();let required=day===0||day===5||day===6?4:3;let lastRequired=day===0||day===5||day===6?2:1;let workers=state.staff.map(s=>state.shifts[s+'|'+dk]||'').filter(v=>v&&v!=='休み');let n=workers.length;let last=workers.filter(v=>v.endsWith('〜LAST')||v==='LAST').length;if(n<required)bad.push(d+'日 ホールあと'+(required-n)+'人');if(last<lastRequired)bad.push(d+'日 LASTあと'+(lastRequired-last)+'人')}$('shortage').innerHTML=bad.length?'<span class="badge warn">⚠ 人数不足</span> '+bad.join('・'):'';
+ $('staffList').innerHTML=state.staff.map((s,i)=>`<div class="person"><span>${escapeHtml(s)}</span><button class="danger" onclick="removeStaff(${i})">削除</button></div>`).join('');
+ $('req').innerHTML=state.staff.map(s=>`<div class="person"><span>${escapeHtml(s)}</span><button onclick="submitRequest('${js(s)}')">希望を提出</button></div>`).join('');
+}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function js(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'")}
+function openEdit(si,d){let s=state.staff[si],k=s+'|'+dateKey(d),v=state.shifts[k]||'';editing={k,quick:null};$('modalTitle').textContent=s+'｜'+dateKey(d)+(state.closed[dateKey(d)]?'（休業日）':'');$('start').value='';$('end').value='';if(v==='休み'){editing.quick='休み'}else if(v==='LAST'){$('end').value='LAST'}else{let m=v.match(/^(\d{2}:\d{2})〜(.*)$/);if(m){$('start').value=m[1];$('end').value=m[2]||''}}$('modal').classList.remove('hidden')}
+function quickSet(v){editing.quick=v;if(v==='休み'){$('start').value='';$('end').value=''}else if(v==='LAST'){$('start').value='';$('end').value='LAST'}else{$('start').value=v.replace('〜','');$('end').value=''}}
+function saveShift(){if(!editing)return;let value;if(editing.quick==='休み')value='休み';else if($('end').value==='LAST'&&$('start').value)value=$('start').value+'〜LAST';else if($('start').value&&$('end').value)value=$('start').value+'〜'+$('end').value;else if($('start').value)value=$('start').value+'〜';else{alert('勤務時間を選択してください');return}state.shifts[editing.k]=value;persist();closeModal();render()}
+function toggleClosed(){if(!editing)return;let dk=editing.k.split('|')[1];if(state.closed[dk]){delete state.closed[dk]}else{state.closed[dk]=true;state.staff.forEach(s=>delete state.shifts[s+'|'+dk])}persist();closeModal();render()}
+function closeModal(){$('modal').classList.add('hidden');editing=null}
+function moveMonth(n){viewDate.setMonth(viewDate.getMonth()+n);render()}
+function addStaff(){let x=$('newStaff').value.trim();if(!x)return;if(!state.staff.includes(x))state.staff.push(x);$('newStaff').value='';persist();render()}
+function removeStaff(i){if(confirm(state.staff[i]+'さんを削除しますか？')){state.staff.splice(i,1);persist();render()}}
+function submitRequest(s){let x=prompt(s+'さんの希望日を入力（例：5,6,12）',state.req[s]||'');if(x!==null){state.req[s]=x;persist();alert('希望シフトを保存しました😊')}}
+function showTab(id,btn){['schedule','requests','staff'].forEach(x=>$(x).classList.toggle('hidden',x!==id));document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));btn.classList.add('active')}
+initTimes();render();
+</script>
+</body>
+</html>
